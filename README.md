@@ -115,10 +115,6 @@ Ce projet est distribué sous licence MIT. Voir le fichier `LICENSE` pour plus d
 
 Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une issue ou à soumettre une pull request.
 
-## Auteur
-
-[Votre nom] - [votre.email@exemple.com]
-
 ---
 
 Développé avec ❤️ et Python
