@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 1. Lancez l'application Streamlit :
 ```bash
-streamlit run app.py
+streamlit run factory_app.py
 ```
 
 2. Accédez à l'application dans votre navigateur (généralement à l'adresse http://localhost:8501)
