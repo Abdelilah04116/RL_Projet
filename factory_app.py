@@ -12,8 +12,8 @@ st.set_page_config(layout="wide", page_title="Simulateur d'Atelier avec RL Reali
 
 # Constantes
 GRID_SIZE = 10
-NUM_MACHINES = 6
-NUM_OPERATORS = 3
+NUM_MACHINES = 3
+NUM_OPERATORS = 6
 TASK_TYPES = ['réparation', 'maintenance', 'configuration', 'nettoyage']
 MACHINE_STATES = {
     'WORKING': 'en fonctionnement',
@@ -161,7 +161,7 @@ class Operator:
 # Environnement RL pour SARSA
 class FactoryEnvironment:
     def __init__(self):
-        self.grid = [[None for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+        self.grid = []
         self.machines = []
         self.operators = []
         self.tasks = []
@@ -173,7 +173,8 @@ class FactoryEnvironment:
         self.initialize()
     
     def initialize(self):
-        self.grid = [[None for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+        # Initialiser une grille vide où chaque case est un dictionnaire d'entités
+        self.grid = [[{} for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
         self.machines = []
         self.operators = []
         self.tasks = []
@@ -186,14 +187,14 @@ class FactoryEnvironment:
             pos = self._get_random_empty_position()
             machine = Machine(f"m{i}", pos)
             self.machines.append(machine)
-            self.grid[pos.y][pos.x] = {'type': 'machine', 'id': machine.id}
+            self.grid[pos.y][pos.x]['machine'] = {'id': machine.id, 'state': machine.state}
         
         # Créer les opérateurs
         for i in range(NUM_OPERATORS):
             pos = self._get_random_empty_position()
             operator = Operator(f"o{i}", pos)
             self.operators.append(operator)
-            self.grid[pos.y][pos.x] = {'type': 'operator', 'id': operator.id}
+            self.grid[pos.y][pos.x]['operator'] = {'id': operator.id}
         
         self.add_log("Simulation initialisée")
     
@@ -201,7 +202,8 @@ class FactoryEnvironment:
         while True:
             x = random.randint(0, GRID_SIZE - 1)
             y = random.randint(0, GRID_SIZE - 1)
-            if self.grid[y][x] is None:
+            # Une position est vide si elle ne contient ni machine ni opérateur
+            if 'machine' not in self.grid[y][x] and 'operator' not in self.grid[y][x]:
                 return Position(x, y)
     
     def add_task(self, machine_id, task_type, priority):
@@ -368,7 +370,14 @@ class FactoryEnvironment:
             task.update_waiting_time(self.time)
         
         # Mettre à jour les opérateurs
-        updated_grid = [row[:] for row in self.grid]
+        updated_grid = [[{} for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+        
+        # D'abord, copier toutes les machines dans la nouvelle grille
+        for machine in self.machines:
+            pos = machine.position
+            updated_grid[pos.y][pos.x]['machine'] = {'id': machine.id, 'state': machine.state}
+        
+        # Ensuite, mettre à jour les opérateurs
         for op in self.operators:
             if op.busy and op.current_task:
                 # Trouver la machine cible
@@ -379,10 +388,12 @@ class FactoryEnvironment:
                     old_pos = Position(op.position.x, op.position.y)
                     new_pos = op.move_toward(target_machine.position)
                     
-                    # Mettre à jour la grille
-                    updated_grid[old_pos.y][old_pos.x] = None
-                    updated_grid[new_pos.y][new_pos.x] = {'type': 'operator', 'id': op.id}
+                    # Mettre à jour la position de l'opérateur dans la grille
+                    updated_grid[new_pos.y][new_pos.x]['operator'] = {'id': op.id}
                 elif target_machine and op.position == target_machine.position:
+                    # L'opérateur est sur la machine, ajouter l'opérateur à la case
+                    updated_grid[op.position.y][op.position.x]['operator'] = {'id': op.id}
+                    
                     # Travailler sur la tâche
                     event = op.work_on_task()
                     if event:  # Tâche terminée
@@ -396,6 +407,9 @@ class FactoryEnvironment:
                                 target_machine.time_since_last_maintenance = 0
                                 self.add_log(f"Maintenance de {target_machine.id} terminée par {op.id}")
                             target_machine.operator = None
+            else:
+                # Opérateur inactif, simplement le copier dans la nouvelle grille
+                updated_grid[op.position.y][op.position.x]['operator'] = {'id': op.id}
         
         self.grid = updated_grid
         
@@ -417,26 +431,30 @@ class FactoryEnvironment:
     
     def render(self):
         """
-        Retourne les données pour le rendu dans Streamlit
+        Retourne les données pour le rendu dans Streamlit, en garantissant la visibilité des machines
         """
         # Données pour grille
         grid_data = []
-        for y in range(GRID_SIZE):
-            for x in range(GRID_SIZE):
-                cell = self.grid[y][x]
-                if cell:
-                    cell_type = cell['type']
-                    cell_id = cell['id']
-                    if cell_type == 'machine':
-                        machine = next((m for m in self.machines if m.id == cell_id), None)
-                        state = machine.state if machine else ""
-                        grid_data.append({
-                            'x': x, 'y': y, 'type': cell_type, 'id': cell_id, 'state': state
-                        })
-                    else:
-                        grid_data.append({
-                            'x': x, 'y': y, 'type': cell_type, 'id': cell_id, 'state': ""
-                        })
+        
+        # D'abord, ajouter toutes les machines
+        for machine in self.machines:
+            grid_data.append({
+                'x': machine.position.x, 
+                'y': machine.position.y, 
+                'type': 'machine', 
+                'id': machine.id, 
+                'state': machine.state
+            })
+        
+        # Ensuite, ajouter les opérateurs
+        for operator in self.operators:
+            grid_data.append({
+                'x': operator.position.x, 
+                'y': operator.position.y, 
+                'type': 'operator', 
+                'id': operator.id, 
+                'state': ''
+            })
         
         # Données des machines
         machines_data = [m.to_dict() for m in self.machines]
@@ -456,27 +474,27 @@ class FactoryEnvironment:
             'time': self.time
         }
 
-# Algorithme SARSA
+# Agent SARSA pour l'apprentissage par renforcement
 class SarsaAgent:
     def __init__(self, alpha=0.1, gamma=0.9, epsilon=0.1):
-        self.alpha = alpha      # Taux d'apprentissage
-        self.gamma = gamma      # Facteur d'actualisation
-        self.epsilon = epsilon  # Paramètre d'exploration
+        self.alpha = alpha  # Taux d'apprentissage
+        self.gamma = gamma  # Facteur d'actualisation
+        self.epsilon = epsilon  # Exploration vs exploitation
         self.q_table = defaultdict(lambda: defaultdict(float))
         self.last_state = None
         self.last_action = None
-        self.episode_rewards = []
         self.cumulative_reward = 0
+        self.episode_rewards = []
     
     def get_action(self, state, available_actions):
         """
-        Sélectionne une action en utilisant la politique epsilon-greedy
+        Choisit une action en utilisant la politique epsilon-greedy
         """
         if random.random() < self.epsilon:
             # Exploration: choisir une action aléatoire
             return random.choice(available_actions)
         else:
-            # Exploitation: choisir l'action avec la plus grande valeur Q
+            # Exploitation: choisir la meilleure action connue
             q_values = {a: self.q_table[state][a] for a in available_actions}
             max_q = max(q_values.values()) if q_values else 0
             best_actions = [a for a, q in q_values.items() if q == max_q]
@@ -607,7 +625,7 @@ def main():
             if 'type' in grid_df.columns:
                 grid_df['color'] = grid_df.apply(get_color, axis=1)
                 
-                # Créer le graphique Altair
+                # Créer le graphique Altair en groupant pour éviter les doublons
                 chart = alt.Chart(grid_df).mark_rect().encode(
                     x=alt.X('x:O', axis=alt.Axis(title='', labels=False, ticks=False), scale=alt.Scale(domain=list(range(GRID_SIZE)))),
                     y=alt.Y('y:O', axis=alt.Axis(title='', labels=False, ticks=False), scale=alt.Scale(domain=list(range(GRID_SIZE)))),
@@ -618,63 +636,23 @@ def main():
                     height=500
                 )
                 
-                # Ajouter les identifiants
+                # Ajouter les identifiants, avec priorité aux machines
                 text = alt.Chart(grid_df).mark_text(fontSize=10).encode(
                     x=alt.X('x:O'),
                     y=alt.Y('y:O'),
                     text='id:N',
-                    color=alt.value('white')
+                    color=alt.value('white'),
+                    # Donner priorité aux identifiants de machines
+                    order=alt.Order(
+                        field='type',
+                        sort='descending'
+                    )
                 )
                 
                 # Combiner les graphiques
                 st.altair_chart(chart + text, use_container_width=True)
         else:
             st.write("Grille vide")
-    
-    with col2:
-        # Légende
-        st.subheader("Légende")
-        legend_data = pd.DataFrame([
-            {"État": "En fonctionnement", "Couleur": "#4CAF50"},
-            {"État": "En panne", "Couleur": "#F44336"},
-            {"État": "En maintenance", "Couleur": "#FFC107"},
-            {"État": "Opérateur", "Couleur": "#2196F3"}
-        ])
-        
-        # Créer la légende avec Altair
-        legend = alt.Chart(legend_data).mark_rect().encode(
-            y=alt.Y('État:N', axis=alt.Axis(title=None)),
-            color=alt.Color('Couleur:N', scale=None)
-        ).properties(width=20, height=100)
-        
-        text = alt.Chart(legend_data).mark_text(align='left', dx=30).encode(
-            y=alt.Y('État:N'),
-            text='État:N'
-        )
-        
-        st.altair_chart(legend + text, use_container_width=True)
-        
-        # Graphique des récompenses
-        st.subheader("Récompenses par épisode")
-        rewards = st.session_state.agent.get_rewards_history()
-        if rewards:
-            rewards_df = pd.DataFrame({
-                'Épisode': range(1, len(rewards) + 1),
-                'Récompense': rewards
-            })
-            
-            chart = alt.Chart(rewards_df).mark_line(point=True).encode(
-                x='Épisode:Q',
-                y='Récompense:Q',
-                tooltip=['Épisode', 'Récompense']
-            ).properties(height=200)
-            
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.write("Pas encore de données de récompense")
-    
-    # Informations détaillées
-    col1, col2 = st.columns(2)
     
     with col1:
         # Machines
@@ -694,26 +672,6 @@ def main():
             st.dataframe(machines_df.style.applymap(highlight_state, subset=['state']))
         else:
             st.write("Pas de données sur les machines")
-        
-        # Tâches
-        st.subheader("Tâches en attente")
-        tasks_df = pd.DataFrame(render_data['tasks'])
-        if not tasks_df.empty:
-            # Trier par priorité
-            tasks_df = tasks_df.sort_values('priority', ascending=False)
-            
-            # Stylage en fonction du type de tâche
-            def highlight_task_type(val):
-                if val == 'réparation':
-                    return 'background-color: #F4433666'
-                elif val == 'maintenance':
-                    return 'background-color: #FFC10766'
-                else:
-                    return 'background-color: #2196F366'
-            
-            st.dataframe(tasks_df.style.applymap(highlight_task_type, subset=['type']))
-        else:
-            st.write("Pas de tâches en attente")
     
     with col2:
         # Opérateurs
@@ -724,31 +682,18 @@ def main():
         else:
             st.write("Pas de données sur les opérateurs")
         
-        # Journal
-        st.subheader("Journal d'événements")
-        st.write("\n".join(render_data['logs']))
-    
-    # Section SARSA
-    st.subheader("Détails de l'algorithme SARSA")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.session_state.use_rl:
-            state = st.session_state.env.get_state()
-            actions = st.session_state.env.get_actions()
-            
-            # Afficher l'état actuel et les valeurs Q
-            st.write(f"État actuel: {state}")
-            st.write(f"Actions disponibles: {actions}")
-            
-            # Afficher les valeurs Q pour l'état actuel
-            q_values = {a: st.session_state.agent.q_table[state][a] for a in actions}
-            q_df = pd.DataFrame({
-                'Action': list(q_values.keys()),
-                'Valeur Q': list(q_values.values())
-            })
-            st.write("Valeurs Q pour l'état actuel:")
-            st.dataframe(q_df)
+        # Tâches en attente
+        st.subheader("Tâches en attente")
+        tasks_df = pd.DataFrame(render_data['tasks'])
+        if not tasks_df.empty:
+            st.dataframe(tasks_df)
+        else:
+            st.write("Pas de tâches en attente")
+        
+        # Logs
+        st.subheader("Logs")
+        for log in render_data['logs']:
+            st.text(log)
     
     with col2:
         st.write("Signification des actions:")
@@ -820,5 +765,4 @@ def main():
         st.experimental_rerun()
 
 if __name__ == "__main__":
-    main()
-     
+    main()     
